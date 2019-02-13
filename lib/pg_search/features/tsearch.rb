@@ -7,7 +7,7 @@ module PgSearch
   module Features
     class TSearch < Feature # rubocop:disable Metrics/ClassLength
       def self.valid_options
-        super + %i[dictionary prefix negation any_word normalization tsvector_column highlight]
+        super + %i[dictionary prefix negation any_word normalization tsvector_column highlight tsvector_order_columns]
       end
 
       def conditions
@@ -22,6 +22,12 @@ module PgSearch
 
       def highlight
         arel_wrap(ts_headline)
+      end
+
+      def order_columns
+        order_tsdocuments.map do |tsdoc|
+          Arel::Nodes::InfixOperation.new('@@', arel_wrap(tsdoc), arel_wrap(tsquery))
+        end
       end
 
       private
@@ -80,6 +86,26 @@ module PgSearch
             end
           end
         end
+      end
+
+      def order_tsdocuments
+        tsdocument_terms = []
+
+        if options[:tsvector_order_columns]
+          tsvector_order_columns = Array.wrap(options[:tsvector_order_columns])
+
+          tsvector_order_columns.each do |tsvector_column|
+            column_name = connection.quote_column_name(tsvector_column)
+
+            tsdocument_terms << "#{quoted_table_name}.#{column_name}"
+          end
+        else
+          tsdocument_terms = (columns_to_use || []).map do |search_column|
+            column_to_tsvector(search_column)
+          end
+        end
+
+        tsdocument_terms
       end
 
       def ts_headline_option_value(value)

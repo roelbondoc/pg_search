@@ -15,13 +15,15 @@ module PgSearch
     def apply(scope)
       scope = include_table_aliasing_for_rank(scope)
       rank_table_alias = scope.pg_search_rank_table_alias(:include_counter)
+      base_order = Arel.sql("#{rank_table_alias}.rank DESC, #{order_within_rank}")
 
       scope
         .joins(rank_join(rank_table_alias))
-        .order(Arel.sql("#{rank_table_alias}.rank DESC, #{order_within_rank}"))
+        .order(base_order)
         .extend(DisableEagerLoading)
         .extend(WithPgSearchRank)
         .extend(WithPgSearchHighlight[feature_for(:tsearch)])
+        .extend(WithPgSearchOrdering[feature_for(:tsearch), base_order])
     end
 
     # workaround for https://github.com/Casecommons/pg_search/issues/14
@@ -54,6 +56,36 @@ module PgSearch
 
       def highlight
         tsearch.highlight.to_sql
+      end
+    end
+
+    module WithPgSearchOrdering
+      def self.[](tsearch, base_order)
+        Module.new do
+          include WithPgSearchOrdering
+          define_method(:tsearch) { tsearch }
+          define_method(:base_order) { base_order }
+        end
+      end
+
+      def tsearch
+        raise TypeError, 'You need to instantiate this module with []'
+      end
+
+      def with_pg_search_ordering
+        scope = self
+        scope = scope.reorder('')
+
+        order_columns.each_with_index do |q, i|
+          scope = scope.select("#{q} AS order_column#{i}")
+          scope = scope.order("order_column#{i} DESC", base_order)
+        end
+
+        scope
+      end
+
+      def order_columns
+        tsearch.order_columns.map(&:to_sql)
       end
     end
 
